@@ -44,14 +44,22 @@ def uruchom_system():
     # --- ETAP 3: Moduł 1 (Parser) ---
     print("\n[3/4] Uruchamianie Modułu 1 (Budowa Struktur Danych)...")
     prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(dane_z_preferencjami)
-
-    # --- ETAP 4: Moduł 2 (Optymalizacja / Algorytm Bazowy) ---
+# --- ETAP 4: Moduł 2 (Optymalizacja / Algorytm Bazowy) ---
     print("\n[4/4] Uruchamianie Modułu 2 (Silnik Optymalizacji)...")
     stan_bazowy = modul2_optymalizacja.StanPlanu()
     algorytm = modul2_optymalizacja.AlgorytmKonstruktywny(stan_bazowy, prowadzacy_db, sale_db, przedmioty_db)
     
     czy_sukces = algorytm.rozwiaz()
+    
+    # --- ETAP 4.5: Symulowane Wyżarzanie (Poprawa okienek) ---
+    if czy_sukces:
+        print("      Plan bazowy ułożony. Uruchamiam Symulowane Wyżarzanie...")
+        optymalizator = modul2_optymalizacja.AlgorytmWyzarzania(stan_bazowy, algorytm.lista_zajec, prowadzacy_db, sale_db)
+        # Optymalizujemy plan w poszukiwaniu optymalnego zadowolenia profesorów
+        optymalizator.optymalizuj()
+        
     czas_dzialania = time.time() - start_time
+   
     
     # --- PODSUMOWANIE W KONSOLI ---
     print("\n" + "="*60)
