@@ -1,18 +1,18 @@
+# modules/modul3_llm.py
 import json
 import requests
 import time
+import copy
 
-# --- KONFIGURACJA ---
-API_URL = "http://149.156.194.192:8088/v1/chat/completions" # Podmień na IP z UPEL
-TOKEN = "bsk-00a229f80354793ad87e93fea4691b31521e4fb43a2cf8cd3d916fe02b64a010" # Twój token
-INPUT_FILE = "C:\\Users\\kapaw\\Downloads\\py\\dane_nowe.json"
-OUTPUT_FILE = "dane_z_preferencjami.json"
+# --- KONFIGURACJA API ---
+API_URL = "http://149.156.194.192:8088/v1/chat/completions" # IP z UPEL
+TOKEN = "bsk-00a229f80354793ad87e93fea4691b31521e4fb43a2cf8cd3d916fe02b64a010"
 
-def call_bielik_api(text):
-    """Wysyła pojedyncze zapytanie do modelu Bielik."""
+def _call_bielik_api(text):
+    """Wysyła pojedyncze zapytanie do modelu Bielik (funkcja wewnętrzna)."""
     system_prompt = (
         "Jesteś asystentem do analizy danych. Przetwórz tekst preferencji na JSON. "
-        "Użyj kluczy: 'preferred_days' (lista skrótów: Mon, Tue, Wed, Thu, Fri, Sat, Sun), "
+        "Użyj kluczy: 'preferred_days' (lista skrótów: Mon, Tue, Wed, Thu, Fri), "
         "'preferred_hours_start' (int), 'preferred_hours_end' (int), "
         "'forbidden_slots' (lista obiektów {'day': skrót, 'from': int, 'to': int}). "
         "Zwróć wyłącznie czysty JSON, bez komentarzy."
@@ -33,63 +33,75 @@ def call_bielik_api(text):
         response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
         if response.status_code == 200:
             content = response.json()["choices"][0]["message"]["content"]
-            # Czyszczenie odpowiedzi z ewentualnych znaczników markdown ```json ... ```
+            # Czyszczenie odpowiedzi z ewentualnych znaczników markdown
             content = content.replace("```json", "").replace("```", "").strip()
             return json.loads(content)
         elif response.status_code == 429:
-            print("Limit zapytań przekroczony! Czekam 10 sekund...")
+            print("   [UWAGA] Limit zapytań API przekroczony! Czekam 10 sekund...")
             time.sleep(10)
             return None
         else:
-            print(f"Błąd API: {response.status_code}")
+            print(f"   [BŁĄD] Odpowiedź API: {response.status_code}")
             return None
     except Exception as e:
-        print(f"Błąd połączenia: {e}")
+        print(f"   [BŁĄD] Problem z połączeniem: {e}")
         return None
 
-def main():
-    # 1. Wczytanie pliku (Moduł 1: Parser)
-    try:
-        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Nie znaleziono pliku {INPUT_FILE}!")
-        return
+def przeanalizuj_preferencje(surowe_dane_json, tryb_offline=True):
+    """
+    Moduł 3: Ekstrakcja preferencji.
+    Główny interfejs wejściowy wywoływany przez nasz główny system.
+    """
+    print("\n-> MODUŁ 3 (LLM): Rozpoczęto analizę preferencji...")
+    
+    # 1. Obsługa Trybu Offline (dla szybkiego testowania UI / algorytmów)
+    if tryb_offline:
+        print("   [INFO] Przełącznik tryb_offline=True. Pomijam łączenie z serwerem UPEL.")
+        return surowe_dane_json
+        
+    # Kopiujemy dane, żeby nie nadpisywać oryginału zanim nie skończymy
+    wzbogacone_dane = copy.deepcopy(surowe_dane_json)
+    instructors = wzbogacone_dane.get('instructors', [])
+    
+    print(f"   [INFO] Zaczynam wysyłać zapytania dla {len(instructors)} prowadzących...")
 
-    print(f"Rozpoczynam analizę {len(data['instructors'])} prowadzących...")
-
-    # 2. Iteracja i wzbogacanie danych (Twoje zadanie główne)
-    for i, instructor in enumerate(data['instructors']):
-        name = instructor['name']
-        text = instructor['preferences_text']
+    # 2. Iteracja i wzbogacanie danych
+    for i, instructor in enumerate(instructors):
+        name = instructor.get('name', 'Nieznany')
+        text = instructor.get('preferences_text', '')
         
-        print(f"[{i+1}/{len(data['instructors'])}] Analizuję: {name}")
+        # Jeśli profesor nie wpisał żadnych preferencji
+        if not text:
+            continue
+            
+        print(f"   [{i+1}/{len(instructors)}] API Bielik przetwarza: {name}...")
         
-        # Wywołanie Bielika
-        extracted = call_bielik_api(text)
+        extracted = _call_bielik_api(text)
         
-        # 3. Obsługa fallback (Tryb Offline/Błędy)
+        # 3. Obsługa fallback (Tryb awaryjny dla konkretnego profesora)
         if extracted is None:
-            print(f" ! Nie udało się pobrać danych dla {name}. Ustawiam puste preferencje.")
+            print(f"   [UWAGA] Nie udało się pobrać danych dla {name}. Ustawiam puste preferencje.")
             extracted = {
                 "preferred_days": [],
                 "preferred_hours_start": 8,
                 "preferred_hours_end": 20,
-                "forbidden_slots": [],
-                "error": True
+                "forbidden_slots": []
             }
         
-        # Dodanie nowej sekcji do oryginalnego obiektu
-        instructor['extracted_preferences'] = extracted
+        # 4. Zapisujemy pod kluczem ZGODNYM z naszym Parserem (Moduł 1)
+        instructor['parsed_preferences'] = extracted
         
-        # Szanujemy limity (max 60/h -> 1 na minutę, ale tu damy mały odstęp)
+        # Szanujemy limity serwera
         time.sleep(1) 
 
-    # 4. Zapisanie gotowego pliku dla reszty zespołu
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    
-    print(f"\nSukces! Dane zapisano w pliku: {OUTPUT_FILE}")
+    # 5. Zapisanie kopii zapasowej (cache) do pliku w folderze data/
+    cache_path = "data/dane_z_preferencjami_cache.json"
+    try:
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(wzbogacone_dane, f, indent=2, ensure_ascii=False)
+        print(f"   [INFO] Kopia zapasowa pobranych danych zapisana w: {cache_path}")
+    except Exception as e:
+        print(f"   [UWAGA] Nie udało się zapisać pliku cache: {e}")
 
-if __name__ == "__main__":
-    main()
+    print("-> MODUŁ 3 (LLM): Zakończono z sukcesem.")
+    return wzbogacone_dane
