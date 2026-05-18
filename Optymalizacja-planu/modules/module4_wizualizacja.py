@@ -26,8 +26,8 @@ DAYS_PL = ["Pon", "Wt", "Śr", "Czw", "Pt"]
 @st.cache_data
 def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     """
-    Wczytuje dane przez Parser i uruchamia Algorytm Konstruktywny.
-    Wyniki są zapamiętywane, aby interfejs działał natychmiastowo.
+    Wczytuje dane przez Parser, uruchamia Algorytm Konstruktywny,
+    a następnie optymalizuje plan Symulowanym Wyżarzaniem.
     """
     start = time.time()
     # 1. Wczytanie danych z JSON
@@ -36,18 +36,24 @@ def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     # 2. Inicjalizacja stanu i uruchomienie algorytmu bazowego
     stan = modul2_optymalizacja.StanPlanu()
     algorytm = modul2_optymalizacja.AlgorytmKonstruktywny(stan, prowadzacy_db, sale_db, przedmioty_db)
-    
     sukces = algorytm.rozwiaz()
+    
+    # 3. Uruchomienie optymalizacji (Symulowane Wyżarzanie)
+    historia = []
+    if sukces:
+        optymalizator = modul2_optymalizacja.AlgorytmWyzarzania(stan, algorytm.lista_zajec, prowadzacy_db, sale_db)
+        # Uruchamiamy chłodzenie (możesz dostosować iter_na_temp żeby działało szybciej/wolniej)
+        historia = optymalizator.optymalizuj(temp_pocz=1000.0, temp_konc=1.0, alfa=0.95, iter_na_temp=150)
+        
     execution_time = time.time() - start
     
-    return sukces, algorytm.lista_zajec, prowadzacy_db, sale_db, przedmioty_db, execution_time
+    return sukces, algorytm.lista_zajec, prowadzacy_db, sale_db, przedmioty_db, execution_time, historia
 
 # Uruchamiamy potok danych na Waszym pliku testowym
-# (Gdy LLM będzie gotowy, podmienicie na "data/dane_z_preferencjami.json")
-SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA = uruchom_silnik_i_pobierz_plan("data/dane_testowe.json")
+SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA, HISTORIA_KOSZTOW = uruchom_silnik_i_pobierz_plan("data/dane_testowe.json")
 
 # ---------------------------------------------------------
-# SIDEBAR (DTRYNICZNE FILTRY BAZUJĄCE NA PRAWDZIWYCH DANYCH)
+# SIDEBAR (DYNAMICZNE FILTRY BAZUJĄCE NA PRAWDZIWYCH DANYCH)
 # ---------------------------------------------------------
 with st.sidebar:
     st.title("OptiPlan 🚀")
@@ -56,20 +62,18 @@ with st.sidebar:
     if not SUKCES:
         st.error("❌ Algorytm Konstruktywny nie był w stanie ułożyć poprawnego planu!")
     else:
-        st.success("✅ Wygenerowano poprawny plan bazowy (HC = 0)")
+        st.success("✅ Wygenerowano zoptymalizowany plan (HC = 0)")
 
     st.subheader("👀 WYBIERZ PERSPEKTYWĘ")
     perspektywa_typ = st.radio("Widok z perspektywy:", ["Grupa", "Prowadzący", "Sala"])
     
-    # Dynamicznie pobieramy opcje wyboru z bazy danych wczytanej przez Parser
+    # Dynamicznie pobieramy opcje wyboru z bazy danych
     if perspektywa_typ == "Grupa":
-        # Pobieramy unikalne ID grup/przedmiotów
         opcje = sorted(list(PRZEDMIOTY_DB.keys()))
         context_name = st.selectbox("Wybierz przedmiot/grupę:", opcje)
         context_title = f"Grupy/Przedmiotu: {context_name}"
         
     elif perspektywa_typ == "Prowadzący":
-        # Tworzymy listę mapującą ID profesora na jego czytelne imię i nazwisko
         opcje_prof = {p_id: p.imie_nazwisko for p_id, p in PROWADZACY_DB.items()}
         wybrany_prof_id = st.selectbox("Wybierz prowadzącego:", list(opcje_prof.keys()), format_func=lambda x: opcje_prof[x])
         context_name = wybrany_prof_id
@@ -81,33 +85,29 @@ with st.sidebar:
         context_title = f"Sali {context_name}"
 
 # ---------------------------------------------------------
-# FUNKCJE RENDERUJĄCE WIDOKI (DODANO DYNAMICZNĄ LOGIKĘ)
+# FUNKCJE RENDERUJĄCE WIDOKI
 # ---------------------------------------------------------
 
 def render_plan(typ_widoku, wybrany_id, context_text):
     st.header(f"📅 Harmonogram dla {context_text}")
     
-    # Tworzymy pustą siatkę planu (godziny x dni) wypełnioną pustymi polami
+    # Tworzymy pustą siatkę planu
     macierz_planu = {dzien: ["—"] * len(HOURS_RANGE) for d_eng, dzien in DAY_MAP_ENG_TO_PL.items()}
     df_plan = pd.DataFrame(macierz_planu, index=HOURS_LABELS)
     
-    # Mapowanie indeksów godzinowych dla szybkiego wstawiania bloków zajęć
     godzina_do_indeksu = {h: i for i, h in enumerate(HOURS_RANGE)}
     
-    # Iterujemy po PRAWDZIWYCH zajęciach ułożonych przez algorytm i filtrujemy je
     for zajecia in LISTA_ZAJEC:
         # Filtry perspektywy
         if typ_widoku == "Grupa" and zajecia.grupa_id != wybrany_id: continue
         if typ_widoku == "Prowadzący" and zajecia.prowadzacy_id != wybrany_id: continue
         if typ_widoku == "Sala" and zajecia.przypisana_sala_id != wybrany_id: continue
         
-        # Pobieramy polską nazwę dnia i pozycję godziny startowej
         pl_dzien = DAY_MAP_ENG_TO_PL.get(zajecia.przypisany_dzien)
         if not pl_dzien: continue
         
         idx_start = godzina_do_indeksu.get(zajecia.przypisany_start_slot)
         
-        # Wypełniamy siatkę zajęć uwzględniając czas trwania bloku (wymagane_godziny)
         for offset in range(zajecia.wymagane_godziny):
             if idx_start is not None and (idx_start + offset) < len(HOURS_LABELS):
                 prof_nazwisko = PROWADZACY_DB[zajecia.prowadzacy_id].imie_nazwisko
@@ -122,22 +122,26 @@ def render_optimization(context_text):
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.subheader("Przebieg zbieżności funkcji celu")
-        # Generujemy przykładową krzywą gaszenia błędów z nawrotów backtracking
-        iters = np.linspace(0, 100, 50)
-        koszt_hc = [max(0, int(30 * np.exp(-i/15) + np.random.normal(0, 0.5))) for i in iters]
+        st.subheader("Zbieżność Symulowanego Wyżarzania")
         
-        fig_opt = go.Figure()
-        fig_opt.add_trace(go.Scatter(x=iters, y=koszt_hc, name="Naroszenia Ograniczeń (Hard)", line=dict(color='#d9534f', width=3)))
-        fig_opt.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Iteracje", yaxis_title="Liczba błędów (HC)")
-        st.plotly_chart(fig_opt, use_container_width=True)
+        # PRAWDZIWE DANE Z ALGORYTMU
+        if HISTORIA_KOSZTOW:
+            iters = list(range(len(HISTORIA_KOSZTOW)))
+            koszt_hc = HISTORIA_KOSZTOW
+            
+            fig_opt = go.Figure()
+            fig_opt.add_trace(go.Scatter(x=iters, y=koszt_hc, name="Punkty Karne (SC)", line=dict(color='#d9534f', width=3)))
+            fig_opt.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Epoki chłodzenia", yaxis_title="Całkowity koszt planu (mniej = lepiej)")
+            st.plotly_chart(fig_opt, use_container_width=True)
+        else:
+            st.info("Brak historii optymalizacji. Prawdopodobnie algorytm nie znalazł planu bazowego.")
 
     with col2:
-        st.subheader("Weryfikator Stanu")
+        st.subheader("Weryfikator Stanu (HC)")
         fig_gauge = go.Figure(go.Indicator(
             mode = "gauge+number",
             value = 100 if SUKCES else 0,
-            title = {'text': "Spełnienie HC (%)"},
+            title = {'text': "Spełnienie Ograniczeń Twardych (%)"},
             gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#2ca02c"}}
         ))
         fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
@@ -148,11 +152,9 @@ def render_optimization(context_text):
     
     with col3:
         st.subheader("Wykorzystanie Sal Akademickich")
-        # Wyciągamy statystyki zajętości sal
         nazwy_sal = list(SALE_DB.keys())
         macierz_heat = np.zeros((len(nazwy_sal), len(DAYS_PL)))
         
-        # Zliczamy ile godzin każda sala pracuje w konkretne dni
         for zajecia in LISTA_ZAJEC:
             if zajecia.przypisana_sala_id in nazwy_sal:
                 s_idx = nazwy_sal.index(zajecia.przypisana_sala_id)
@@ -184,15 +186,16 @@ def render_optimization(context_text):
 def render_statistics(context_text):
     st.header(f"📊 Pełne Raporty Statystyczne")
     
-    # Dynamiczne wyliczanie wskaźników z pamięci RAM
     l_zajec = len(LISTA_ZAJEC)
     naruszenia_twarde = 0 if SUKCES else len([z for z in LISTA_ZAJEC if z.przypisany_dzien is None])
+    koszt_koncowy = HISTORIA_KOSZTOW[-1] if HISTORIA_KOSZTOW else 0
+    spadek_kosztu = (HISTORIA_KOSZTOW[0] - HISTORIA_KOSZTOW[-1]) if HISTORIA_KOSZTOW else 0
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Zaplanowane bloki", f"{l_zajec} / {len(PRZEDMIOTY_DB)}")
     c2.metric("Naruszenia twarde (HC)", f"{naruszenia_twarde}", "0 (Brak kolizji)", delta_color="normal")
-    c3.metric("Optymalność preferencji (SC)", "Skonfigurowano", "Krok 4")
-    c4.metric("Czas obliczeniowy silnika", f"{CZAS_WYKONANIA:.4f} s")
+    c3.metric("Punkty Karne (SC)", f"{koszt_koncowy}", f"-{spadek_kosztu} zniwelowanych", delta_color="inverse")
+    c4.metric("Czas obliczeniowy silnika", f"{CZAS_WYKONANIA:.2f} s")
     
     st.divider()
     col1, col2 = st.columns(2)
@@ -201,7 +204,6 @@ def render_statistics(context_text):
         st.subheader("Status Obciążenia Prowadzących")
         dane_prow = []
         for p_id, p in PROWADZACY_DB.items():
-            # Sumujemy godziny przypisane w planie
             godz_przydzielone = sum([z.wymagane_godziny for z in LISTA_ZAJEC if z.prowadzacy_id == p_id])
             dane_prow.append({
                 "Identyfikator": p_id,
