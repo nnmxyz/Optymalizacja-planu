@@ -4,112 +4,133 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 import time
+import json
 
-# Importujemy Moduł 1 i Moduł 2 z Waszej nowej architektury
+# Importujemy nasze moduły
 from modules import modul1_parser
 from modules import modul2_optymalizacja
 
-# ---------------------------------------------------------
-# CONFIG / MAPOWANIE CZASU
-# ---------------------------------------------------------
-# Zakres godzin zgodny z silnikiem optymalizacyjnym (godziny 8-20)
+# Konfiguracja strony
+st.set_page_config(layout="wide", page_title="OptiPlan - Optymalizacja Planu")
+
+# --- STYLE CSS ---
+st.markdown("""
+    <style>
+    /* Tło całej aplikacji */
+    .stApp { background-color: #f4f7f9; }
+    
+    /* Stylizacja 'kart' dla sekcji */
+    div[data-testid="stVerticalBlock"] > div:has(div.element-container) {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+    }
+    
+    /* Ukrycie obramowania tabel */
+    .stTable { border: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- MAPOWANIE CZASU ---
 HOURS_RANGE = range(8, 20)
 HOURS_LABELS = [f"{h:02d}:00" for h in HOURS_RANGE]
-
-# Słownik mapujący dni angielskie (z bazy) na polskie skróty (do tabeli UI)
 DAY_MAP_ENG_TO_PL = {"Mon": "Pon", "Tue": "Wt", "Wed": "Śr", "Thu": "Czw", "Fri": "Pt"}
 DAYS_PL = ["Pon", "Wt", "Śr", "Czw", "Pt"]
 
-# ---------------------------------------------------------
-# CACHE: SILNIK ODPALA SIĘ RAZ I TRZYMA WYNIK W PAMIĘCI
-# ---------------------------------------------------------
+# --- URUCHOMIENIE SILNIKA ---
 @st.cache_data
 def uruchom_silnik_i_pobierz_plan(sciezka_danych):
-    """
-    Wczytuje dane przez Parser, uruchamia Algorytm Konstruktywny,
-    a następnie optymalizuje plan Symulowanym Wyżarzaniem.
-    """
     start = time.time()
     
-    # DODANE: Otwieramy plik JSON i robimy z niego słownik dla parsera
-    import json
     with open(sciezka_danych, 'r', encoding='utf-8') as plik:
         dane_json = json.load(plik)
         
-    # 1. Wczytanie danych z rozpakowanego JSON-a
     prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(dane_json)
-
     
-    # 2. Inicjalizacja stanu i uruchomienie algorytmu bazowego
     stan = modul2_optymalizacja.StanPlanu()
     algorytm = modul2_optymalizacja.AlgorytmKonstruktywny(stan, prowadzacy_db, sale_db, przedmioty_db)
     sukces = algorytm.rozwiaz()
     
-    # 3. Uruchomienie optymalizacji (Symulowane Wyżarzanie)
     historia = []
     if sukces:
         optymalizator = modul2_optymalizacja.AlgorytmWyzarzania(stan, algorytm.lista_zajec, prowadzacy_db, sale_db)
-        # Uruchamiamy chłodzenie (możesz dostosować iter_na_temp żeby działało szybciej/wolniej)
         historia = optymalizator.optymalizuj(temp_pocz=1000.0, temp_konc=1.0, alfa=0.95, iter_na_temp=150)
         
     execution_time = time.time() - start
-    
     return sukces, algorytm.lista_zajec, prowadzacy_db, sale_db, przedmioty_db, execution_time, historia
 
-# Uruchamiamy potok danych na Waszym pliku testowym
 SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA, HISTORIA_KOSZTOW = uruchom_silnik_i_pobierz_plan("data/dane_testowe.json")
 
-# ---------------------------------------------------------
-# SIDEBAR (DYNAMICZNE FILTRY BAZUJĄCE NA PRAWDZIWYCH DANYCH)
-# ---------------------------------------------------------
+# --- SIDEBAR (Filtry i wybór perspektywy) ---
 with st.sidebar:
-    st.title("OptiPlan 🚀")
-    st.caption("Zintegrowany System Harmonogramowania AGH")
+    st.title("OptiPlan")
+    st.caption("Optymalizacja planu zajęć")
     
     if not SUKCES:
-        st.error("❌ Algorytm Konstruktywny nie był w stanie ułożyć poprawnego planu!")
+        st.error("❌ Błąd algorytmu: Brak możliwości ułożenia planu!")
     else:
         st.success("✅ Wygenerowano zoptymalizowany plan (HC = 0)")
-
+    
     st.subheader("👀 WYBIERZ PERSPEKTYWĘ")
     perspektywa_typ = st.radio("Widok z perspektywy:", ["Grupa", "Prowadzący", "Sala"])
     
-    # Dynamicznie pobieramy opcje wyboru z bazy danych
     if perspektywa_typ == "Grupa":
-        opcje = sorted(list(PRZEDMIOTY_DB.keys()))
-        context_name = st.selectbox("Wybierz przedmiot/grupę:", opcje)
-        context_title = f"Grupy/Przedmiotu: {context_name}"
-        
+        opcje_grup = sorted(list(set([z.grupa_id for z in LISTA_ZAJEC])))
+        context_name = st.selectbox("Wybierz grupę:", opcje_grup, key="sel_grup_main")
+        context_title = f"Grupy {context_name}"
+        wybrany_id = context_name
     elif perspektywa_typ == "Prowadzący":
         opcje_prof = {p_id: p.imie_nazwisko for p_id, p in PROWADZACY_DB.items()}
-        wybrany_prof_id = st.selectbox("Wybierz prowadzącego:", list(opcje_prof.keys()), format_func=lambda x: opcje_prof[x])
-        context_name = wybrany_prof_id
-        context_title = PROWADZACY_DB[wybrany_prof_id].imie_nazwisko
-        
+        wybrany_id = st.selectbox("Wybierz prowadzącego:", list(opcje_prof.keys()), format_func=lambda x: opcje_prof[x], key="sel_prof_main")
+        context_title = PROWADZACY_DB[wybrany_id].imie_nazwisko if wybrany_id else ""
     else:
         opcje_sale = sorted(list(SALE_DB.keys()))
-        context_name = st.selectbox("Wybierz salę wykładową:", opcje_sale)
-        context_title = f"Sali {context_name}"
-
-# ---------------------------------------------------------
-# FUNKCJE RENDERUJĄCE WIDOKI
-# ---------------------------------------------------------
-
-def render_plan(typ_widoku, wybrany_id, context_text):
-    st.header(f"📅 Harmonogram dla {context_text}")
+        wybrany_id = st.selectbox("Wybierz salę:", opcje_sale, key="sel_sala_main")
+        context_title = f"Sali {wybrany_id}"
+        
+    st.divider()
     
-    # Tworzymy pustą siatkę planu
+    st.subheader("🔍 DODATKOWE FILTRY")
+    # Dynamiczne wczytanie dodatkowych filtrów
+    lista_prow_nazwiska = ["Wszyscy"] + [p.imie_nazwisko for p in PROWADZACY_DB.values()]
+    lista_sal = ["Wszystkie"] + sorted(list(SALE_DB.keys()))
+    lista_grup = ["Wszystkie"] + sorted(list(set([z.grupa_id for z in LISTA_ZAJEC])))
+    
+    filtr_prow = st.selectbox("Prowadzący", lista_prow_nazwiska, key="filter_prow")
+    filtr_sala = st.selectbox("Sala", lista_sal, key="filter_sala")
+    filtr_grupa = st.selectbox("Grupa", lista_grup, key="filter_grupa")
+    filtr_typ = st.selectbox("Typ zajęć", ["Wszystkie", "Wykład", "Ćwiczenia", "Lab", "Projekt"], key="filter_typ")
+    
+    if st.button("Zastosuj filtry", type="primary"):
+        st.success("Zastosowano filtry!")
+    st.button("Wyczyść filtry")
+
+# --- FUNKCJE RENDERUJĄCE WIDOKI ---
+
+def render_plan(typ_widoku, wybrany_identyfikator, tytul_naglowka):
+    st.header(f"📅 Plan zajęć - Widok: {tytul_naglowka}")
+    
     macierz_planu = {dzien: ["—"] * len(HOURS_RANGE) for d_eng, dzien in DAY_MAP_ENG_TO_PL.items()}
     df_plan = pd.DataFrame(macierz_planu, index=HOURS_LABELS)
-    
     godzina_do_indeksu = {h: i for i, h in enumerate(HOURS_RANGE)}
     
     for zajecia in LISTA_ZAJEC:
-        # Filtry perspektywy
-        if typ_widoku == "Grupa" and zajecia.grupa_id != wybrany_id: continue
-        if typ_widoku == "Prowadzący" and zajecia.prowadzacy_id != wybrany_id: continue
-        if typ_widoku == "Sala" and zajecia.przypisana_sala_id != wybrany_id: continue
+        # Główny filtr perspektywy
+        if typ_widoku == "Grupa" and zajecia.grupa_id != wybrany_identyfikator: continue
+        if typ_widoku == "Prowadzący" and zajecia.prowadzacy_id != wybrany_identyfikator: continue
+        if typ_widoku == "Sala" and zajecia.przypisana_sala_id != wybrany_identyfikator: continue
         
+        # Filtry dodatkowe z sidebara
+        prof_obj = PROWADZACY_DB.get(zajecia.prowadzacy_id)
+        if filtr_prow != "Wszyscy" and (prof_obj and prof_obj.imie_nazwisko != filtr_prow): continue
+        if filtr_sala != "Wszystkie" and zajecia.przypisana_sala_id != filtr_sala: continue
+        if filtr_grupa != "Wszystkie" and zajecia.grupa_id != filtr_grupa: continue
+        # Proste dopasowanie typu zajęć
+        if filtr_typ != "Wszystkie":
+            if filtr_typ.lower() not in zajecia.wymagany_typ_sali.lower(): continue
+
         pl_dzien = DAY_MAP_ENG_TO_PL.get(zajecia.przypisany_dzien)
         if not pl_dzien: continue
         
@@ -117,48 +138,46 @@ def render_plan(typ_widoku, wybrany_id, context_text):
         
         for offset in range(zajecia.wymagane_godziny):
             if idx_start is not None and (idx_start + offset) < len(HOURS_LABELS):
-                prof_nazwisko = PROWADZACY_DB[zajecia.prowadzacy_id].imie_nazwisko
-                info_text = f"🧬 {zajecia.przedmiot_id} \n👨‍🏫 {prof_nazwisko} \n🚪 Sala: {zajecia.przypisana_sala_id}"
-                df_plan.iloc[idx_start + offset][pl_dzien] = info_text
+                prof_nazwisko = prof_obj.imie_nazwisko if prof_obj else zajecia.prowadzacy_id
+                info_text = f"🧬 {zajecia.przedmiot_id} \n👨‍🏫 {prof_nazwisko} \n🚪 {zajecia.przypisana_sala_id}"
+                df_plan.loc[HOURS_LABELS[idx_start + offset], pl_dzien] = info_text
                 
-    st.dataframe(df_plan, use_container_width=True, height=500)
+    st.table(df_plan)
 
 
-def render_optimization(context_text):
-    st.header(f"📈 Wykresy Postępu i Wykorzystania Zasobów")
+def render_optimization():
+    st.header(f"📈 Postęp optymalizacji - Widok ogólny")
     
     col1, col2 = st.columns([2, 1])
+    
     with col1:
-        st.subheader("Zbieżność Symulowanego Wyżarzania")
-        
-        # PRAWDZIWE DANE Z ALGORYTMU
+        st.subheader("Przebieg funkcji celu (Algorytm Wyżarzania)")
         if HISTORIA_KOSZTOW:
             iters = list(range(len(HISTORIA_KOSZTOW)))
-            koszt_hc = HISTORIA_KOSZTOW
-            
             fig_opt = go.Figure()
-            fig_opt.add_trace(go.Scatter(x=iters, y=koszt_hc, name="Punkty Karne (SC)", line=dict(color='#d9534f', width=3)))
-            fig_opt.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Epoki chłodzenia", yaxis_title="Całkowity koszt planu (mniej = lepiej)")
+            fig_opt.add_trace(go.Scatter(x=iters, y=HISTORIA_KOSZTOW, name="Punkty karne (SC)", line=dict(color='#1f77b4', width=3)))
+            fig_opt.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Iteracje", yaxis_title="Koszt planu")
             st.plotly_chart(fig_opt, use_container_width=True)
         else:
-            st.info("Brak historii optymalizacji. Prawdopodobnie algorytm nie znalazł planu bazowego.")
+            st.info("Brak historii optymalizacji.")
 
     with col2:
-        st.subheader("Weryfikator Stanu (HC)")
+        st.subheader("Zaspokojenie ograniczeń (HC)")
         fig_gauge = go.Figure(go.Indicator(
             mode = "gauge+number",
             value = 100 if SUKCES else 0,
-            title = {'text': "Spełnienie Ograniczeń Twardych (%)"},
-            gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#2ca02c"}}
+            title = {'text': "Sukces (%)"},
+            gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#007bff"}}
         ))
         fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig_gauge, use_container_width=True)
         
     st.divider()
+    
     col3, col4 = st.columns(2)
     
     with col3:
-        st.subheader("Wykorzystanie Sal Akademickich")
+        st.subheader("Wykorzystanie sal (Heatmapa)")
         nazwy_sal = list(SALE_DB.keys())
         macierz_heat = np.zeros((len(nazwy_sal), len(DAYS_PL)))
         
@@ -170,12 +189,12 @@ def render_optimization(context_text):
                     d_idx = DAYS_PL.index(d_pl)
                     macierz_heat[s_idx, d_idx] += zajecia.wymagane_godziny
                     
-        fig_heat = px.imshow(macierz_heat, x=DAYS_PL, y=nazwy_sal, color_continuous_scale='YlGnBu', labels=dict(x="Dzień tygodnia", y="Sala", color="Godziny/Tydz"))
+        fig_heat = px.imshow(macierz_heat, x=DAYS_PL, y=nazwy_sal, color_continuous_scale='Blues')
         fig_heat.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig_heat, use_container_width=True)
         
     with col4:
-        st.subheader("Przydział godzinowy kadry naukowej")
+        st.subheader("Obciążenie prowadzących")
         imiona_prof = [p.imie_nazwisko for p in PROWADZACY_DB.values()]
         godziny_przydzielone = [0] * len(imiona_prof)
         
@@ -185,13 +204,14 @@ def render_optimization(context_text):
                 idx = list(PROWADZACY_DB.keys()).index(zajecia.prowadzacy_id)
                 godziny_przydzielone[idx] += zajecia.wymagane_godziny
                 
-        fig_bar = px.bar(x=godziny_przydzielone, y=imiona_prof, orientation='h', labels={'x':'Liczba godzin w tygodniu', 'y':''}, color_discrete_sequence=['#1f77b4'])
+        fig_bar = px.bar(x=godziny_przydzielone, y=imiona_prof, orientation='h', labels={'x':'Suma godzin', 'y':''}, color_discrete_sequence=['#007bff'])
         fig_bar.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig_bar, use_container_width=True)
 
 
-def render_statistics(context_text):
-    st.header(f"📊 Pełne Raporty Statystyczne")
+def render_statistics():
+    st.header(f"📊 Raport statystyczny")
+    st.markdown("Szczegółowe dane liczbowe i wykazy w formie tabelarycznej.")
     
     l_zajec = len(LISTA_ZAJEC)
     naruszenia_twarde = 0 if SUKCES else len([z for z in LISTA_ZAJEC if z.przypisany_dzien is None])
@@ -199,52 +219,50 @@ def render_statistics(context_text):
     spadek_kosztu = (HISTORIA_KOSZTOW[0] - HISTORIA_KOSZTOW[-1]) if HISTORIA_KOSZTOW else 0
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Zaplanowane bloki", f"{l_zajec} / {len(PRZEDMIOTY_DB)}")
-    c2.metric("Naruszenia twarde (HC)", f"{naruszenia_twarde}", "0 (Brak kolizji)", delta_color="normal")
-    c3.metric("Punkty Karne (SC)", f"{koszt_koncowy}", f"-{spadek_kosztu} zniwelowanych", delta_color="inverse")
-    c4.metric("Czas obliczeniowy silnika", f"{CZAS_WYKONANIA:.2f} s")
+    c1.metric("Łączna liczba zajęć", f"{l_zajec}")
+    c2.metric("Naruszenia twarde", f"{naruszenia_twarde}", "0", delta_color="off")
+    c3.metric("Punkty Karne (SC)", f"{koszt_koncowy}", f"-{spadek_kosztu}")
+    c4.metric("Czas ostatniej optymalizacji", f"{CZAS_WYKONANIA:.2f} s")
     
     st.divider()
+    
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Status Obciążenia Prowadzących")
+        st.subheader("Wykaz Prowadzących")
         dane_prow = []
         for p_id, p in PROWADZACY_DB.items():
             godz_przydzielone = sum([z.wymagane_godziny for z in LISTA_ZAJEC if z.prowadzacy_id == p_id])
             dane_prow.append({
-                "Identyfikator": p_id,
                 "Imię i nazwisko": p.imie_nazwisko,
-                "Pensum tygodniowe": f"{p.limit_slotow_tydzien} godz.",
-                "Przydzielono": f"{godz_przydzielone} godz.",
-                "Status limitu": "✅ W normie" if godz_przydzielone <= p.limit_slotow_tydzien else "⚠️ Przekroczone"
+                "Liczba godzin (tyg)": godz_przydzielone,
+                "Pensum": p.limit_slotow_tydzien,
+                "Status": "✅ Ok" if godz_przydzielone <= p.limit_slotow_tydzien else "⚠️ Przekroczone"
             })
         st.dataframe(pd.DataFrame(dane_prow), use_container_width=True, hide_index=True)
         
     with col2:
-        st.subheader("Wykorzystanie Techniczne Sal")
+        st.subheader("Wykaz Sal")
         dane_sal = []
         for s_id, s in SALE_DB.items():
             godz_sala = sum([z.wymagane_godziny for z in LISTA_ZAJEC if z.przypisana_sala_id == s_id])
             dane_sal.append({
-                "Numer sali": s_id,
-                "Specjalizacja": s.typ,
-                "Maks. pojemność": f"{s.pojemnosc} os.",
-                "Suma godzin pracy": f"{godz_sala}h / tydzień"
+                "Sala": s_id,
+                "Typ": s.typ,
+                "Pojemność": s.pojemnosc,
+                "Zajętość (godz)": godz_sala
             })
         st.dataframe(pd.DataFrame(dane_sal), use_container_width=True, hide_index=True)
 
 
-# ---------------------------------------------------------
-# GŁÓWNE ZAKŁADKI PANELU INTERFEJSU
-# ---------------------------------------------------------
-tab_plan, tab_opt, tab_stat = st.tabs(["📅 Plan zajęć", "📈 Wykresy i Optymalizacja", "📊 Rejestry i Statystyki"])
+# --- GŁÓWNE ZAKŁADKI APLIKACJI ---
+tab_plan, tab_opt, tab_stat = st.tabs(["📅 Plan zajęć", "📈 Optymalizacja", "📊 Raport statystyczny"])
 
 with tab_plan:
-    render_plan(perspektywa_typ, context_name, context_title)
+    render_plan(perspektywa_typ, wybrany_id, context_title)
 
 with tab_opt:
-    render_optimization(context_title)
+    render_optimization()
 
 with tab_stat:
-    render_statistics(context_title)
+    render_statistics()
