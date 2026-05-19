@@ -142,7 +142,7 @@ def render_plan(typ_widoku, wybrany_identyfikator, tytul_naglowka):
         for offset in range(zajecia.wymagane_godziny):
             if idx_start is not None and (idx_start + offset) < len(HOURS_LABELS):
                 prof_nazwisko = prof_obj.imie_nazwisko if prof_obj else zajecia.prowadzacy_id
-                info_text = f"{zajecia.przedmiot_id} \nProwadzący: {prof_nazwisko} \nSala: {zajecia.przypisana_sala_id}"
+                info_text = f"{zajecia.przedmiot_id}, \nProwadzący: {prof_nazwisko}, \nSala: {zajecia.przypisana_sala_id}"
                 df_plan.loc[HOURS_LABELS[idx_start + offset], pl_dzien] = info_text
                 
     st.table(df_plan)
