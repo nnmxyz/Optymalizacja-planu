@@ -9,6 +9,7 @@ import json
 # Importujemy nasze moduły
 from modules import modul1_parser
 from modules import modul2_optymalizacja
+from modules import modul3_llm
 
 # Konfiguracja strony
 st.set_page_config(layout="wide", page_title="OptiPlan - Optymalizacja Planu")
@@ -45,9 +46,13 @@ def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     start = time.time()
     
     with open(sciezka_danych, 'r', encoding='utf-8') as plik:
-        dane_json = json.load(plik)
+        surowe_dane = json.load(plik)
         
-    prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(dane_json)
+    # Przetwarzanie LLM na żywo z tryb_offline=False
+    dane_po_llm = modul3_llm.przeanalizuj_preferencje(surowe_dane, tryb_offline=False)
+        
+    # Parser wczytuje dane wzbogacone przez model AI
+    prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(dane_po_llm)
     
     stan = modul2_optymalizacja.StanPlanu()
     algorytm = modul2_optymalizacja.AlgorytmKonstruktywny(stan, prowadzacy_db, sale_db, przedmioty_db)
@@ -61,7 +66,9 @@ def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     execution_time = time.time() - start
     return sukces, algorytm.lista_zajec, prowadzacy_db, sale_db, przedmioty_db, execution_time, historia
 
-SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA, HISTORIA_KOSZTOW = uruchom_silnik_i_pobierz_plan("data/dane_testowe.json")
+# --- ŁADOWANIE Z KOMUNIKATEM DLA PROWADZĄCEGO ---
+with st.spinner("Sztuczna Inteligencja (Bielik) analizuje dane tekstowe i układa zoptymalizowany plan. To potrwa chwilę..."):
+    SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA, HISTORIA_KOSZTOW = uruchom_silnik_i_pobierz_plan("data/dane_testowe.json")
 
 # --- SIDEBAR (Filtry i wybór perspektywy) ---
 with st.sidebar:
@@ -69,11 +76,11 @@ with st.sidebar:
     st.caption("Optymalizacja planu zajęć")
     
     if not SUKCES:
-        st.error("❌ Błąd algorytmu: Brak możliwości ułożenia planu!")
+        st.error("Błąd algorytmu: Brak możliwości ułożenia planu dla podanych ograniczeń twardych!")
     else:
-        st.success("✅ Wygenerowano zoptymalizowany plan (HC = 0)")
+        st.success("Wygenerowano zoptymalizowany plan (HC = 0)")
     
-    st.subheader("👀 WYBIERZ PERSPEKTYWĘ")
+    st.subheader("WYBIERZ PERSPEKTYWĘ")
     perspektywa_typ = st.radio("Widok z perspektywy:", ["Grupa", "Prowadzący", "Sala"])
     
     if perspektywa_typ == "Grupa":
@@ -92,8 +99,7 @@ with st.sidebar:
         
     st.divider()
     
-    st.subheader("🔍 DODATKOWE FILTRY")
-    # Dynamiczne wczytanie dodatkowych filtrów
+    st.subheader("DODATKOWE FILTRY")
     lista_prow_nazwiska = ["Wszyscy"] + [p.imie_nazwisko for p in PROWADZACY_DB.values()]
     lista_sal = ["Wszystkie"] + sorted(list(SALE_DB.keys()))
     lista_grup = ["Wszystkie"] + sorted(list(set([z.grupa_id for z in LISTA_ZAJEC])))
@@ -110,24 +116,21 @@ with st.sidebar:
 # --- FUNKCJE RENDERUJĄCE WIDOKI ---
 
 def render_plan(typ_widoku, wybrany_identyfikator, tytul_naglowka):
-    st.header(f"📅 Plan zajęć - Widok: {tytul_naglowka}")
+    st.header(f"Plan zajęć - Widok: {tytul_naglowka}")
     
     macierz_planu = {dzien: ["—"] * len(HOURS_RANGE) for d_eng, dzien in DAY_MAP_ENG_TO_PL.items()}
     df_plan = pd.DataFrame(macierz_planu, index=HOURS_LABELS)
     godzina_do_indeksu = {h: i for i, h in enumerate(HOURS_RANGE)}
     
     for zajecia in LISTA_ZAJEC:
-        # Główny filtr perspektywy
         if typ_widoku == "Grupa" and zajecia.grupa_id != wybrany_identyfikator: continue
         if typ_widoku == "Prowadzący" and zajecia.prowadzacy_id != wybrany_identyfikator: continue
         if typ_widoku == "Sala" and zajecia.przypisana_sala_id != wybrany_identyfikator: continue
         
-        # Filtry dodatkowe z sidebara
         prof_obj = PROWADZACY_DB.get(zajecia.prowadzacy_id)
         if filtr_prow != "Wszyscy" and (prof_obj and prof_obj.imie_nazwisko != filtr_prow): continue
         if filtr_sala != "Wszystkie" and zajecia.przypisana_sala_id != filtr_sala: continue
         if filtr_grupa != "Wszystkie" and zajecia.grupa_id != filtr_grupa: continue
-        # Proste dopasowanie typu zajęć
         if filtr_typ != "Wszystkie":
             if filtr_typ.lower() not in zajecia.wymagany_typ_sali.lower(): continue
 
@@ -139,14 +142,14 @@ def render_plan(typ_widoku, wybrany_identyfikator, tytul_naglowka):
         for offset in range(zajecia.wymagane_godziny):
             if idx_start is not None and (idx_start + offset) < len(HOURS_LABELS):
                 prof_nazwisko = prof_obj.imie_nazwisko if prof_obj else zajecia.prowadzacy_id
-                info_text = f"🧬 {zajecia.przedmiot_id} \n👨‍🏫 {prof_nazwisko} \n🚪 {zajecia.przypisana_sala_id}"
+                info_text = f"{zajecia.przedmiot_id} \nProwadzący: {prof_nazwisko} \nSala: {zajecia.przypisana_sala_id}"
                 df_plan.loc[HOURS_LABELS[idx_start + offset], pl_dzien] = info_text
                 
     st.table(df_plan)
 
 
 def render_optimization():
-    st.header(f"📈 Postęp optymalizacji - Widok ogólny")
+    st.header("Postęp optymalizacji - Widok ogólny")
     
     col1, col2 = st.columns([2, 1])
     
@@ -156,7 +159,7 @@ def render_optimization():
             iters = list(range(len(HISTORIA_KOSZTOW)))
             fig_opt = go.Figure()
             fig_opt.add_trace(go.Scatter(x=iters, y=HISTORIA_KOSZTOW, name="Punkty karne (SC)", line=dict(color='#1f77b4', width=3)))
-            fig_opt.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Iteracje", yaxis_title="Koszt planu")
+            fig_opt.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Iteracje chłodzenia", yaxis_title="Koszt planu (im niżej, tym lepiej)")
             st.plotly_chart(fig_opt, use_container_width=True)
         else:
             st.info("Brak historii optymalizacji.")
@@ -189,7 +192,7 @@ def render_optimization():
                     d_idx = DAYS_PL.index(d_pl)
                     macierz_heat[s_idx, d_idx] += zajecia.wymagane_godziny
                     
-        fig_heat = px.imshow(macierz_heat, x=DAYS_PL, y=nazwy_sal, color_continuous_scale='Blues')
+        fig_heat = px.imshow(macierz_heat, x=DAYS_PL, y=nazwy_sal, color_continuous_scale='Blues', labels=dict(x="Dzień", y="Sala", color="Godziny"))
         fig_heat.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig_heat, use_container_width=True)
         
@@ -204,13 +207,13 @@ def render_optimization():
                 idx = list(PROWADZACY_DB.keys()).index(zajecia.prowadzacy_id)
                 godziny_przydzielone[idx] += zajecia.wymagane_godziny
                 
-        fig_bar = px.bar(x=godziny_przydzielone, y=imiona_prof, orientation='h', labels={'x':'Suma godzin', 'y':''}, color_discrete_sequence=['#007bff'])
+        fig_bar = px.bar(x=godziny_przydzielone, y=imiona_prof, orientation='h', labels={'x':'Suma godzin w tygodniu', 'y':''}, color_discrete_sequence=['#007bff'])
         fig_bar.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig_bar, use_container_width=True)
 
 
 def render_statistics():
-    st.header(f"📊 Raport statystyczny")
+    st.header("Raport statystyczny")
     st.markdown("Szczegółowe dane liczbowe i wykazy w formie tabelarycznej.")
     
     l_zajec = len(LISTA_ZAJEC)
@@ -237,7 +240,7 @@ def render_statistics():
                 "Imię i nazwisko": p.imie_nazwisko,
                 "Liczba godzin (tyg)": godz_przydzielone,
                 "Pensum": p.limit_slotow_tydzien,
-                "Status": "✅ Ok" if godz_przydzielone <= p.limit_slotow_tydzien else "⚠️ Przekroczone"
+                "Status": "Ok" if godz_przydzielone <= p.limit_slotow_tydzien else "Przekroczone"
             })
         st.dataframe(pd.DataFrame(dane_prow), use_container_width=True, hide_index=True)
         
@@ -256,7 +259,7 @@ def render_statistics():
 
 
 # --- GŁÓWNE ZAKŁADKI APLIKACJI ---
-tab_plan, tab_opt, tab_stat = st.tabs(["📅 Plan zajęć", "📈 Optymalizacja", "📊 Raport statystyczny"])
+tab_plan, tab_opt, tab_stat = st.tabs(["Plan zajęć", "Optymalizacja", "Raport statystyczny"])
 
 with tab_plan:
     render_plan(perspektywa_typ, wybrany_id, context_title)

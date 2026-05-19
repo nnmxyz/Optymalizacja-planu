@@ -10,8 +10,9 @@ class Prowadzacy:
         # Bezpieczne pobranie pensum
         hps = dane_json.get('hours_per_semester', 210)
         self.limit_slotow_tydzien = max(1, int(hps / 15))
+        # Pobieramy preferencje, szukając pod obydwoma kluczami (bezpieczny fallback)
+        prefs = dane_json.get('parsed_preferences', dane_json.get('extracted_preferences', {}))
         
-        prefs = dane_json.get('parsed_preferences', {})
         self.preferowane_dni = set(prefs.get('preferred_days', []))
         self.zakazane_sloty = set()
         for zakaz in prefs.get('forbidden_slots', []):
