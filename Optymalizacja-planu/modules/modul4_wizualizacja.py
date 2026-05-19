@@ -30,8 +30,15 @@ def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     a następnie optymalizuje plan Symulowanym Wyżarzaniem.
     """
     start = time.time()
-    # 1. Wczytanie danych z JSON
-    prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(sciezka_danych)
+    
+    # DODANE: Otwieramy plik JSON i robimy z niego słownik dla parsera
+    import json
+    with open(sciezka_danych, 'r', encoding='utf-8') as plik:
+        dane_json = json.load(plik)
+        
+    # 1. Wczytanie danych z rozpakowanego JSON-a
+    prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(dane_json)
+
     
     # 2. Inicjalizacja stanu i uruchomienie algorytmu bazowego
     stan = modul2_optymalizacja.StanPlanu()

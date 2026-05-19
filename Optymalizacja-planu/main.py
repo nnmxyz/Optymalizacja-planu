@@ -78,7 +78,8 @@ def uruchom_system():
     if wybor == 'T':
         print("\nUruchamianie serwera wizualizacji... (Za chwilę w przeglądarce otworzy się nowa karta)")
         # Ten kod wyręcza Was z wpisywania komendy w terminalu!
-        subprocess.Popen(["streamlit", "run", "modules/modul4_wizualizacja.py"])
+        subprocess.run([sys.executable, "-m", "streamlit", "run", "modules/modul4_wizualizacja.py"])
+        
     else:
         print("\nZakończono pracę programu.")
 

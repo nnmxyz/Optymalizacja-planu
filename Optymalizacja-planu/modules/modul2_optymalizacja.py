@@ -65,23 +65,35 @@ class AlgorytmKonstruktywny:
 
     def rozwiaz(self):
         return self._backtrack(0)
-
     def _backtrack(self, indeks_zajec):
         if indeks_zajec == len(self.lista_zajec): return True
         zajecia = self.lista_zajec[indeks_zajec]
+        
+        # Szybki filtr kompetencji
         dostepni_prowadzacy = [p for p in self.prowadzacy_db.values() if zajecia.baza_przedmiotu in p.kompetencje]
         
+        # DETEKTYW 1: Jeśli nikt nie umie tego uczyć, krzyczymy w konsoli!
+        if not dostepni_prowadzacy:
+            print(f"\n[BŁĄD W DANYCH] Żaden profesor nie ma wpisanej kompetencji: '{zajecia.baza_przedmiotu}'!")
+            return False
+            
         for prowadzacy in dostepni_prowadzacy:
             for sala in self.sale_db:
-                if sala.typ != zajecia.wymagany_typ_sali or sala.pojemnosc < zajecia.liczba_studentow: continue 
+                # Szybki filtr sal
+                if sala.typ != zajecia.wymagany_typ_sali or sala.pojemnosc < zajecia.liczba_studentow: 
+                    continue 
+                    
                 for dzien in self.dni_tygodnia:
                     for start_slot in range(8, 20 - zajecia.wymagane_godziny + 1):
                         if self.stan.czy_ruch_jest_legalny(zajecia, dzien, start_slot, sala, prowadzacy):
                             self.stan.wstaw_zajecia(zajecia, dzien, start_slot, sala, prowadzacy)
                             if self._backtrack(indeks_zajec + 1): return True
                             self.stan.usun_zajecia(zajecia)
+                            
+        # DETEKTYW 2: Jeśli przeszukaliśmy wszystko i nic, też krzyczymy!
+        print(f"\n[BŁĄD W DANYCH] Nie ma fizycznie miejsca w salach/czasie dla: '{zajecia.przedmiot_id}'!")
         return False
-
+    
 
 class AlgorytmWyzarzania:
     """Moduł optymalizujący ograniczenia miękkie (SC) z wykorzystaniem Symulowanego Wyżarzania."""
@@ -90,7 +102,7 @@ class AlgorytmWyzarzania:
         self.stan = stan_planu
         self.lista_zajec = lista_zajec
         self.prowadzacy_db = prowadzacy_db
-        self.sale_db = sale_db
+        self.sale_db = list(sale_db.values())
         self.dni_tygodnia = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
         
         # Wagi Funkcji Celu (Kalkulatora Kar)

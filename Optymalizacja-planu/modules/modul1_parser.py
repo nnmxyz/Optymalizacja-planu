@@ -1,4 +1,4 @@
-# modules/modul1_parser.py
+
 
 class Prowadzacy:
     __slots__ = ['id', 'imie_nazwisko', 'kompetencje', 'preferowane_dni', 'zakazane_sloty', 'limit_slotow_tydzien']
@@ -6,7 +6,11 @@ class Prowadzacy:
         self.id = dane_json['id']
         self.imie_nazwisko = dane_json['name']
         self.kompetencje = set(dane_json['subjects']) 
-        self.limit_slotow_tydzien = int(dane_json['hours_per_semester'] / 15)
+        
+        # Bezpieczne pobranie pensum
+        hps = dane_json.get('hours_per_semester', 210)
+        self.limit_slotow_tydzien = max(1, int(hps / 15))
+        
         prefs = dane_json.get('parsed_preferences', {})
         self.preferowane_dni = set(prefs.get('preferred_days', []))
         self.zakazane_sloty = set()
@@ -22,18 +26,37 @@ class Sala:
         self.typ = dane_json['type']
         self.pojemnosc = dane_json['capacity']
         self.dostepnosc = set()
-        for dzien, godziny in dane_json.get('availability', {}).items():
-            for godzina in godziny:
-                self.dostepnosc.add((dzien, godzina))
+        
+        # Jeśli JSON ma wpisaną dostępność - używamy jej
+        if 'availability' in dane_json:
+            for dzien, godziny in dane_json['availability'].items():
+                for godzina in godziny:
+                    self.dostepnosc.add((dzien, godzina))
+        else:
+            # Domyślne ustawienie: uczelnia otwarta Pn-Pt 8:00 - 20:00
+            for dzien in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']:
+                for godzina in range(8, 20):
+                    self.dostepnosc.add((dzien, godzina))
 
 class Przedmiot:
-    __slots__ = ['id', 'nazwa', 'typ', 'liczba_studentow', 'wymagane_godziny', 'wymagany_typ_sali']
+    __slots__ = ['id', 'subject_id', 'group_id', 'nazwa', 'typ', 'liczba_studentow', 'wymagane_godziny', 'wymagany_typ_sali']
     def __init__(self, dane_json):
         self.id = dane_json['id']
+        
+        # TO BYŁO ŹRÓDŁO PROBLEMU - Pobieramy właściwe klucze z JSONa:
+        self.subject_id = dane_json.get('subject_id', self.id)
+        self.group_id = dane_json.get('group_id', self.id)
+        
         self.nazwa = dane_json['name']
         self.typ = dane_json['type']
-        self.liczba_studentow = dane_json['students']
-        self.wymagane_godziny = dane_json['hours_per_week']
+        self.liczba_studentow = dane_json.get('students', 20)
+        
+        if 'hours_per_week' in dane_json:
+            self.wymagane_godziny = dane_json['hours_per_week']
+        else:
+            hps = dane_json.get('hours_per_semester', 30)
+            self.wymagane_godziny = max(1, int(hps / 14)) 
+            
         self.wymagany_typ_sali = dane_json['required_room_type']
 
 class Zajecia:
@@ -46,8 +69,11 @@ class Zajecia:
         self.liczba_studentow = przedmiot.liczba_studentow
         self.wymagany_typ_sali = przedmiot.wymagany_typ_sali
         self.wymagane_godziny = przedmiot.wymagane_godziny
-        self.baza_przedmiotu = przedmiot.id.rsplit('-', 1)[0]
-        self.grupa_id = przedmiot.id 
+        
+        # PRZEKAZUJEMY DO ALGORYTMU WŁAŚCIWE NAZWY ZAMIAST "C01"
+        self.baza_przedmiotu = przedmiot.subject_id
+        self.grupa_id = przedmiot.group_id 
+        
         self.prowadzacy_id = None 
         self.przypisany_dzien = None
         self.przypisany_start_slot = None
@@ -59,4 +85,3 @@ def zbuduj_baze_obiektow(dane_json):
         {s['id']: Sala(s) for s in dane_json.get('rooms', [])},
         {c['id']: Przedmiot(c) for c in dane_json.get('courses', [])}
     )
-
