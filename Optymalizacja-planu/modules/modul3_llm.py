@@ -1,21 +1,32 @@
-# modules/modul3_llm.py
 import json
 import requests
 import time
-import copy
 
-# --- KONFIGURACJA API ---
-API_URL = "http://149.156.194.192:8088/v1/chat/completions" # IP z UPEL
+
+API_URL = "http://149.156.194.192:8088/v1/chat/completions"
 TOKEN = "bsk-00a229f80354793ad87e93fea4691b31521e4fb43a2cf8cd3d916fe02b64a010"
+INPUT_FILE = "C:\\Users\\kapaw\\Downloads\\py\\dane_nowe.json"
+OUTPUT_FILE = "dane_z_siatka.json"
 
-def _call_bielik_api(text):
-    """Wysyła pojedyncze zapytanie do modelu Bielik (funkcja wewnętrzna)."""
+def call_bielik_matrix_api(text):
+    """Wysyła zapytanie do modelu Bielik i oczekuje struktury siatki tygodniowej."""
+    
     system_prompt = (
-        "Jesteś asystentem do analizy danych. Przetwórz tekst preferencji na JSON. "
-        "Użyj kluczy: 'preferred_days' (lista skrótów: Mon, Tue, Wed, Thu, Fri), "
-        "'preferred_hours_start' (int), 'preferred_hours_end' (int), "
-        "'forbidden_slots' (lista obiektów {'day': skrót, 'from': int, 'to': int}). "
-        "Zwróć wyłącznie czysty JSON, bez komentarzy."
+        "Jesteś asystentem do analizy danych. Twoim zadaniem jest przetworzenie tekstu preferencji "
+        "prowadzącego na ustrukturyzowany JSON reprezentujący siatkę godzinową dla dni: "
+        "Mon, Tue, Wed, Thu, Fri. "
+        "Dla każdego dnia stwórz listę wartości dla godzin od 8 do 19 (czyli 12 pozycji: indeks 0 to godzina 8, indeks 11 to godzina 19). "
+        "Przypisz wartości liczbowe według zasad:\n"
+        "0 - NIE MOGĘ (brak dostępności, zakaz, zebrania, badania),\n"
+        "1 - MOGĘ W RAZIE POTRZEBY (warunkowo, wolę unikać, w ostateczności),\n"
+        "2 - MOGĘ (na pewno, preferowane godziny, idealne rano/popołudniu).\n\n"
+        "Format wyjściowy musi wyglądać dokładnie tak:\n"
+        "{\n"
+        "  \"Mon\": [2, 2, 2, 2, 0, 0, 0, 1, 1, 1, 1, 1],\n"
+        "  \"Tue\": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\n"
+        "  ...\n"
+        "}\n"
+        "Zwróć wyłącznie czysty, poprawny JSON, bez żadnego dodatkowego tekstu czy komentarzy."
     )
     
     payload = {
@@ -24,84 +35,72 @@ def _call_bielik_api(text):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text}
         ],
-        "temperature": 0.1 # Niska temperatura dla większej precyzji
+        "temperature": 0.0
     }
     
     headers = {"Authorization": f"Bearer {TOKEN}"}
     
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=40)
         if response.status_code == 200:
             content = response.json()["choices"][0]["message"]["content"]
-            # Czyszczenie odpowiedzi z ewentualnych znaczników markdown
+            # Czyszczenie kodu ze znaczników markdown, które LLM czasem dodaje
             content = content.replace("```json", "").replace("```", "").strip()
             return json.loads(content)
         elif response.status_code == 429:
-            print("   [UWAGA] Limit zapytań API przekroczony! Czekam 10 sekund...")
-            time.sleep(10)
+            print("Przekroczono limit zapytań (429). Czekam na reset...")
+            time.sleep(15)
             return None
         else:
-            print(f"   [BŁĄD] Odpowiedź API: {response.status_code}")
+            print(f"Błąd serwera Bielik: {response.status_code}")
             return None
     except Exception as e:
-        print(f"   [BŁĄD] Problem z połączeniem: {e}")
+        print(f"Błąd połączenia z API: {e}")
         return None
 
-def przeanalizuj_preferencje(surowe_dane_json, tryb_offline=True):
-    """
-    Moduł 3: Ekstrakcja preferencji.
-    Główny interfejs wejściowy wywoływany przez nasz główny system.
-    """
-    print("\n-> MODUŁ 3 (LLM): Rozpoczęto analizę preferencji...")
-    
-    # 1. Obsługa Trybu Offline (dla szybkiego testowania UI / algorytmów)
-    if tryb_offline:
-        print("   [INFO] Przełącznik tryb_offline=True. Pomijam łączenie z serwerem UPEL.")
-        return surowe_dane_json
-        
-    # Kopiujemy dane, żeby nie nadpisywać oryginału zanim nie skończymy
-    wzbogacone_dane = copy.deepcopy(surowe_dane_json)
-    instructors = wzbogacone_dane.get('instructors', [])
-    
-    print(f"   [INFO] Zaczynam wysyłać zapytania dla {len(instructors)} prowadzących...")
+def get_default_matrix():
+    """Generuje domyślną bezpieczną siatkę (same jedynki) w razie awarii LLM."""
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    return {day: [1] * 12 for day in days}
 
-    # 2. Iteracja i wzbogacanie danych
-    for i, instructor in enumerate(instructors):
-        name = instructor.get('name', 'Nieznany')
-        text = instructor.get('preferences_text', '')
-        
-        # Jeśli profesor nie wpisał żadnych preferencji
-        if not text:
-            continue
-            
-        print(f"   [{i+1}/{len(instructors)}] API Bielik przetwarza: {name}...")
-        
-        extracted = _call_bielik_api(text)
-        
-        # 3. Obsługa fallback (Tryb awaryjny dla konkretnego profesora)
-        if extracted is None:
-            print(f"   [UWAGA] Nie udało się pobrać danych dla {name}. Ustawiam puste preferencje.")
-            extracted = {
-                "preferred_days": [],
-                "preferred_hours_start": 8,
-                "preferred_hours_end": 20,
-                "forbidden_slots": []
-            }
-        
-        # 4. Zapisujemy pod kluczem ZGODNYM z naszym Parserem (Moduł 1)
-        instructor['parsed_preferences'] = extracted
-        
-        # Szanujemy limity serwera
-        time.sleep(1) 
-
-    # 5. Zapisanie kopii zapasowej (cache) do pliku w folderze data/
-    cache_path = "data/dane_z_preferencjami_cache.json"
+def main():
+    # 1. Wczytanie pliku źródłowego (Moduł 1)
     try:
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(wzbogacone_dane, f, indent=2, ensure_ascii=False)
-        print(f"   [INFO] Kopia zapasowa pobranych danych zapisana w: {cache_path}")
-    except Exception as e:
-        print(f"   [UWAGA] Nie udało się zapisać pliku cache: {e}")
+        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"Błąd: Nie znaleziono pliku {INPUT_FILE} w bieżącym katalogu.")
+        return
 
-    print("-> MODUŁ 3 (LLM): Zakończono z sukcesem.")
-    return wzbogacone_dane
+    print(f"Rozpoczynam generowanie macierzy dostępności dla {len(data['instructors'])} prowadzących...")
+
+    # 2. Przetwarzanie każdego profesora (Moduł 3)
+    for i, instructor in enumerate(data['instructors']):
+        name = instructor['name']
+        text = instructor['preferences_text']
+        
+        print(f"[{i+1}/{len(data['instructors'])}] Przetwarzam: {name}")
+        
+        # Wywołanie modelu Bielik
+        availability_matrix = call_bielik_matrix_api(text)
+        
+        # 3. Tryb awaryjny / Fallback offline w razie błędu serwera
+        if availability_matrix is None:
+            print(f" ! Problem z LLM dla {name}. Generuję siatkę domyślną (tryb offline).")
+            availability_matrix = get_default_matrix()
+            availability_matrix["offline_fallback"] = True
+            
+        # Zapisujemy nową siatkę bezpośrednio do danych tego prowadzącego
+        instructor['availability_matrix'] = availability_matrix
+        
+        # Bezpieczny odstęp czasowy, aby nie przekroczyć limitu 60 zapytań na godzinę
+        time.sleep(2)
+
+    # 4. Zapisanie nowego pliku JSON dla Inżynierów Algorytmów
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    
+    print(f"\nSukces! Nowy plik z siatkami godzinowymi zapisany jako: {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    main()
