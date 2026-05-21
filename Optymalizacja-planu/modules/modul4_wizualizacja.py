@@ -1,11 +1,4 @@
-import sys
-import os
 
-# Naprawa ścieżek dla chmury Streamlit (żeby widział folder 'modules')
-sciezka_bazowa = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if sciezka_bazowa not in sys.path:
-    sys.path.append(sciezka_bazowa)
-    
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
