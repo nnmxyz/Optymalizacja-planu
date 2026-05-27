@@ -48,34 +48,9 @@ def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     with open(sciezka_danych, 'r', encoding='utf-8') as plik:
         surowe_dane = json.load(plik)
         
-    # --- NOWOŚĆ: Wywołujemy JEDNO zbiorcze zapytanie do AI ---
+    # --- LLM BATCH PROCESSING ---
+    # Nowy moduł 3 od razu zwraca dane z gotowym kluczem 'availability_matrix'
     dane_po_llm = modul3_llm.przeanalizuj_preferencje(surowe_dane, tryb_offline=False)
-    
-    # --- ADAPTER: Tłumaczymy nowy format AI na Matrycę (Księgowy tego potrzebuje) ---
-    for inst in dane_po_llm.get('instructors', []):
-        prefs = inst.get('parsed_preferences', {})
-        matryca = {d: [2]*12 for d in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']} # Domyślnie 2 (chętnie)
-        
-        # Nakładamy blokady (0 = nie mogę)
-        for blokada in prefs.get('forbidden_slots', []):
-            d = blokada.get('day')
-            if d in matryca:
-                for h in range(blokada.get('from', 8), blokada.get('to', 20)):
-                    idx = h - 8
-                    if 0 <= idx < 12: 
-                        matryca[d][idx] = 0
-                        
-        # Oznaczamy mniej preferowane dni jako 1
-        pref_days = prefs.get('preferred_days', [])
-        if pref_days:
-            for d in matryca.keys():
-                if d not in pref_days:
-                    for idx in range(12):
-                        if matryca[d][idx] != 0: 
-                            matryca[d][idx] = 1
-                            
-        inst['availability_matrix'] = matryca
-    # ---------------------------------------------------------------------------------
         
     # Parser wczytuje dane wzbogacone przez model AI
     prowadzacy_db, sale_db, przedmioty_db = modul1_parser.zbuduj_baze_obiektow(dane_po_llm)
