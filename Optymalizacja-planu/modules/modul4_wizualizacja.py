@@ -71,9 +71,14 @@ def uruchom_silnik_i_pobierz_plan(sciezka_danych):
     execution_time = time.time() - start
     return sukces, algorytm.lista_zajec, prowadzacy_db, sale_db, przedmioty_db, execution_time, historia
 
-# --- ŁADOWANIE Z KOMUNIKATEM DLA PROWADZĄCEGO ---
+import os
+
+# Budujemy niezawodną ścieżkę absolutną
+sciezka_bazy = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sciezka_do_danych = os.path.join(sciezka_bazy, "data", "dane_testowe.json")
+
 with st.spinner("Sztuczna Inteligencja (Bielik) analizuje paczkę preferencji. To potrwa chwilę..."):
-    SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA, HISTORIA_KOSZTOW = uruchom_silnik_i_pobierz_plan("data/dane_testowe.json")
+    SUKCES, LISTA_ZAJEC, PROWADZACY_DB, SALE_DB, PRZEDMIOTY_DB, CZAS_WYKONANIA, HISTORIA_KOSZTOW = uruchom_silnik_i_pobierz_plan(sciezka_do_danych)
 
 # --- SIDEBAR (Filtry i wybór perspektywy) ---
 with st.sidebar:
