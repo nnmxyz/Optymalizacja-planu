@@ -136,7 +136,7 @@ def przeanalizuj_preferencje(surowe_dane_json, tryb_offline=False, delay_seconds
     return wzbogacone_dane
 # --- PRODUKCYJNA SEKCJA URUCHAMIAJĄCA (ZAPIS DO PLIKU) ---
 if __name__ == "__main__":
-    INPUT_FILE = "C:\\Users\\kapaw\\Downloads\\py\\dane_nowe.json"
+    INPUT_FILE = r"C:\Users\Natalka\Downloads\Optymalizacja-planu-master\Optymalizacja-planu-master\Optymalizacja-planu\data\dane_testowe.json"
     OUTPUT_FILE = "dane_z_siatka.json"
 
     print(f"1. Wczytuję surowy plik z dysku: {INPUT_FILE}...")
